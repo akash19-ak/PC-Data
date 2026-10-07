@@ -32,10 +32,6 @@ EXCEL_FILE = BASE_DIR / "PC_Specs.xlsx"
 DIST_DIR = BASE_DIR.parent / "frontend" / "dist"
 CONFIG_FILE = BASE_DIR / "config.json"
 
-DEFAULT_GOOGLE_SHEET_URL = (
-    "https://docs.google.com/spreadsheets/d/1n2Y-ODl1AhIs_dRAUfa-sWTrSJFKttzrQMZl0f6gD3Y/edit?usp=sharing"
-)
-
 if (DIST_DIR / "assets").exists():
     app.mount("/assets", StaticFiles(directory=str(DIST_DIR / "assets")), name="assets")
 
@@ -70,13 +66,11 @@ class PCSpecs(BaseModel):
 
 
 class ConfigModel(BaseModel):
-    google_sheet_url: str = DEFAULT_GOOGLE_SHEET_URL
     webhook_url: str = ""
 
 
 def get_config() -> dict:
     config = {
-        "google_sheet_url": DEFAULT_GOOGLE_SHEET_URL,
         "webhook_url": os.environ.get("GOOGLE_SHEET_WEBHOOK", ""),
     }
     if CONFIG_FILE.exists():
@@ -98,17 +92,8 @@ def save_config(cfg: dict):
 
 
 def sync_to_google_sheet(data: dict):
-    """Optionally syncs row to Google Sheet via Google Apps Script Web App webhook if configured."""
-    cfg = get_config()
-    webhook = cfg.get("webhook_url", "").strip()
-    if not webhook:
-        return {"status": "no_webhook", "message": "Google Sheet Webhook not configured"}
-
-    try:
-        resp = requests.post(webhook, json=data, timeout=5)
-        return {"status": "success", "response": resp.text}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
+    """Legacy no-op kept for compatibility. Google Sheets sync is intentionally disabled."""
+    return {"status": "disabled", "message": "Google Sheets sync is disabled."}
 
 
 def create_excel():
@@ -300,7 +285,6 @@ def home(request: Request):
         "message": "PC Specification Server Running",
         "excel_path": str(EXCEL_FILE),
         "status": "healthy",
-        "google_sheet_url": DEFAULT_GOOGLE_SHEET_URL,
         "ui_url": "/app",
     }
 
@@ -361,7 +345,7 @@ def get_all_pcs():
             )
 
     if not rows or len(rows) <= 1:
-        return {"success": True, "count": 0, "pcs": [], "google_sheet_url": DEFAULT_GOOGLE_SHEET_URL}
+        return {"success": True, "count": 0, "pcs": []}
 
     pcs = []
     for row_idx, row in enumerate(rows[1:], start=2):
@@ -387,7 +371,6 @@ def get_all_pcs():
         "success": True,
         "count": len(pcs),
         "pcs": pcs,
-        "google_sheet_url": DEFAULT_GOOGLE_SHEET_URL,
     }
 
 
@@ -434,17 +417,14 @@ def save_pc(data: PCSpecs):
             wb.save(EXCEL_FILE)
             wb.close()
 
-            # Trigger optional cloud sync
             payload = data.model_dump() if hasattr(data, "model_dump") else data.dict()
             payload["date"] = now_str
-            threading.Thread(target=sync_to_google_sheet, args=(payload,), daemon=True).start()
 
             return {
                 "success": True,
                 "action": action,
                 "message": f"PC '{data.pc_name}' information {action} successfully.",
                 "data": payload,
-                "google_sheet_url": DEFAULT_GOOGLE_SHEET_URL,
             }
 
         except PermissionError:
@@ -470,7 +450,6 @@ def scan_and_save():
         "message": f"Local PC '{specs.pc_name}' scanned and saved successfully.",
         "specs": specs.model_dump() if hasattr(specs, "model_dump") else specs.dict(),
         "save_result": result,
-        "google_sheet_url": DEFAULT_GOOGLE_SHEET_URL,
     }
 
 

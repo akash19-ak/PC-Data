@@ -1,13 +1,6 @@
 import { useEffect, useState } from "react";
 import "./App.css";
 
-const GOOGLE_SHEET_URL =
-  "https://docs.google.com/spreadsheets/d/1n2Y-ODl1AhIs_dRAUfa-sWTrSJFKttzrQMZl0f6gD3Y/edit?gid=0#gid=0";
-
-// Live Google Apps Script Webhook URL connected directly to Google Sheet 1n2Y-ODl1AhIs_dRAUfa-sWTrSJFKttzrQMZl0f6gD3Y
-const WEBHOOK_URL =
-  "https://script.google.com/macros/s/AKfycbz7MVUFUEbw_TvcbkfVho7Yd5ZOVFA0WojJoyvqu5uVGydDjxZsFlOH5gspYrmWXal2/exec";
-
 function App() {
   const [specs, setSpecs] = useState(null);
   const [employeeName, setEmployeeName] = useState("");
@@ -44,7 +37,7 @@ function App() {
       setSpecs(detected);
       showNotification("System hardware detected successfully!", "info");
       
-      // Save directly to Sheet & Local Storage
+      // Save locally and keep the recent history in browser storage
       await sendDataToSheet(detected, "Auto-Detected System");
     } catch (err) {
       showNotification("Error detecting hardware details: " + err.message, "error");
@@ -55,7 +48,7 @@ function App() {
 
   const sendDataToSheet = async (detectedSpecs, defaultName = "Anonymous Visitor") => {
     setSaving(true);
-    showNotification("Saving specifications directly to Google Sheet...", "info");
+    showNotification("Recording system specifications...", "info");
 
     const payload = {
       timestamp: new Date().toLocaleString(),
@@ -75,7 +68,7 @@ function App() {
       timezone: detectedSpecs.timezone,
     };
 
-    // 1. Send to Local Backend if running
+    // Save to the local backend if it is running
     try {
       await fetch("http://localhost:8000/api/save-pc", {
         method: "POST",
@@ -95,23 +88,13 @@ function App() {
       }).catch(() => null);
     } catch (e) {}
 
-    // 2. Send directly to Live Google Apps Script Webhook URL
-    try {
-      await fetch(WEBHOOK_URL, {
-        method: "POST",
-        mode: "no-cors",
-        headers: { "Content-Type": "text/plain" },
-        body: JSON.stringify(payload),
-      }).catch(() => null);
-    } catch (e) {}
-
-    // 3. Save to local storage history
+    // Save to local storage history
     const updatedHistory = [payload, ...localHistory.filter(h => h.timestamp !== payload.timestamp).slice(0, 49)];
     setLocalHistory(updatedHistory);
     localStorage.setItem("pc_specs_history", JSON.stringify(updatedHistory));
 
     setSaving(false);
-    showNotification("🎉 Hardware specifications saved directly into your Google Sheet!", "success");
+    showNotification("🎉 Computer specifications recorded successfully!", "success");
   };
 
   const handleManualSubmit = (e) => {
@@ -133,19 +116,8 @@ function App() {
           <div className="brand-icon">💻</div>
           <div>
             <h1>Office PC Hardware Inspector</h1>
-            <p className="subtitle">System Hardware Collector & Direct Google Sheet Storage</p>
+            <p className="subtitle">System Hardware Inspector & Auto Spec Collector</p>
           </div>
-        </div>
-
-        <div className="nav-actions">
-          <a
-            href={GOOGLE_SHEET_URL}
-            target="_blank"
-            rel="noreferrer"
-            className="btn btn-sheet"
-          >
-            <span className="sheet-icon">📊</span> Open Admin Google Sheet ↗
-          </a>
         </div>
       </header>
 
@@ -178,7 +150,7 @@ function App() {
               onClick={scanAndSaveDirectly}
               disabled={loading || saving}
             >
-              {loading ? "Scanning..." : "🔄 Re-Scan & Save to Sheet"}
+              {loading ? "Scanning..." : "🔄 Re-Scan & Save"}
             </button>
           </div>
 
@@ -273,9 +245,9 @@ function App() {
 
           {/* Submission Form Section */}
           <div className="form-container">
-            <h3>Record Specification to Admin Google Sheet</h3>
+            <h3>Record Computer Specifications</h3>
             <p className="form-hint">
-              Optionally enter employee details below to tag this machine in the Google Sheet.
+              Optionally enter employee details below to tag this machine in system records.
             </p>
 
             <form onSubmit={handleManualSubmit} className="submit-form">
@@ -321,8 +293,8 @@ function App() {
                   disabled={saving || loading}
                 >
                   {saving
-                    ? "⏳ Saving to Google Sheet..."
-                    : "📤 Save Specifications to Google Sheet"}
+                    ? "⏳ Saving Specifications..."
+                    : "📤 Save Specifications"}
                 </button>
               </div>
             </form>
@@ -331,29 +303,10 @@ function App() {
 
         {/* Right Side: Information & Recent Submissions */}
         <aside className="sidebar">
-          {/* Sheet Status Widget */}
-          <div className="card widget-card">
-            <h3>📊 Admin Google Sheet</h3>
-            <p className="widget-desc">
-              All collected hardware specifications automatically save into this workbook:
-            </p>
-            <a
-              href={GOOGLE_SHEET_URL}
-              target="_blank"
-              rel="noreferrer"
-              className="btn btn-sheet-full"
-            >
-              Open Admin Spreadsheet ↗
-            </a>
-            <div className="sheet-badge">
-              <span className="dot online"></span> Live Google Sheet Synchronized
-            </div>
-          </div>
-
           {/* Recent Submissions History */}
           {localHistory.length > 0 && (
             <div className="card history-card">
-              <h3>📜 Recent Submissions ({localHistory.length})</h3>
+              <h3>📜 System Record History ({localHistory.length})</h3>
               <div className="history-list">
                 {localHistory.slice(0, 5).map((item, idx) => (
                   <div key={idx} className="history-item">
