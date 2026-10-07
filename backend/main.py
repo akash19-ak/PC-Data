@@ -33,7 +33,7 @@ DIST_DIR = BASE_DIR.parent / "frontend" / "dist"
 CONFIG_FILE = BASE_DIR / "config.json"
 
 DEFAULT_GOOGLE_SHEET_URL = (
-    "https://docs.google.com/spreadsheets/d/1n2Y-ODl1AhIs_dRAUfa-sWTrSJFKttzrQMZl0f6gD3Y/edit?gid=0#gid=0"
+    "https://docs.google.com/spreadsheets/d/1n2Y-ODl1AhIs_dRAUfa-sWTrSJFKttzrQMZl0f6gD3Y/edit?usp=sharing"
 )
 
 if (DIST_DIR / "assets").exists():

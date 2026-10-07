@@ -1,41 +1,33 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState } from "react";
 import "./App.css";
 
-const API_BASE = "http://localhost:8000";
 const GOOGLE_SHEET_URL =
   "https://docs.google.com/spreadsheets/d/1n2Y-ODl1AhIs_dRAUfa-sWTrSJFKttzrQMZl0f6gD3Y/edit?gid=0#gid=0";
 
+// Live Google Apps Script Webhook URL connected directly to Google Sheet 1n2Y-ODl1AhIs_dRAUfa-sWTrSJFKttzrQMZl0f6gD3Y
+const WEBHOOK_URL =
+  "https://script.google.com/macros/s/AKfycbz7MVUFUEbw_TvcbkfVho7Yd5ZOVFA0WojJoyvqu5uVGydDjxZsFlOH5gspYrmWXal2/exec";
+
 function App() {
-  const [pcs, setPcs] = useState([]);
-  const [selectedPc, setSelectedPc] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [scanning, setScanning] = useState(false);
-  const [serverOnline, setServerOnline] = useState(null);
-  const [statusMessage, setStatusMessage] = useState("Connecting and scanning system specifications...");
+  const [specs, setSpecs] = useState(null);
+  const [employeeName, setEmployeeName] = useState("");
+  const [customPcName, setCustomPcName] = useState("");
+  const [department, setDepartment] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [statusMessage, setStatusMessage] = useState("");
   const [statusType, setStatusType] = useState("info"); // 'info' | 'success' | 'error'
-  const [searchQuery, setSearchQuery] = useState("");
-  const [showManualForm, setShowManualForm] = useState(false);
-  const [showSyncModal, setShowSyncModal] = useState(false);
-  const [webhookUrl, setWebhookUrl] = useState("");
-  const [webhookStatus, setWebhookStatus] = useState("");
+  const [localHistory, setLocalHistory] = useState([]);
 
-  const [formData, setFormData] = useState({
-    pc_name: "",
-    username: "",
-    windows: "",
-    cpu: "",
-    ram: "",
-    gpu: "",
-    disk: "",
-    manufacturer: "",
-    model: "",
-    ip_address: "",
-  });
-
-  // Requirement: "As we press link it should show computer details and store that in sheet"
-  // So automatically trigger scan and store on initial page load!
   useEffect(() => {
-    initApp();
+    // Load local history
+    try {
+      const hist = JSON.parse(localStorage.getItem("pc_specs_history") || "[]");
+      setLocalHistory(hist);
+    } catch {}
+
+    // Auto-scan hardware specs on page load and save directly
+    scanAndSaveDirectly();
   }, []);
 
   const showNotification = (msg, type = "info") => {
@@ -43,285 +35,126 @@ function App() {
     setStatusType(type);
   };
 
-  const initApp = async () => {
-    setScanning(true);
-    showNotification("Detecting computer hardware details & saving to sheet...", "info");
+  const scanAndSaveDirectly = async () => {
+    setLoading(true);
+    showNotification("Detecting system specifications...", "info");
+
     try {
-      // 1. Trigger scan and save
-      const scanRes = await fetch(`${API_BASE}/api/scan-and-save`, { method: "POST" });
-      if (scanRes.ok) {
-        const scanData = await scanRes.json();
-        setServerOnline(true);
-        if (scanData.specs) {
-          setSelectedPc(scanData.specs);
-          showNotification(
-            `Computer details for '${scanData.specs.pc_name}' loaded and saved to sheet successfully!`,
-            "success"
-          );
-        }
-      } else {
-        setServerOnline(true);
-      }
+      const detected = await detectSystemSpecs();
+      setSpecs(detected);
+      showNotification("System hardware detected successfully!", "info");
+      
+      // Save directly to Sheet & Local Storage
+      await sendDataToSheet(detected, "Auto-Detected System");
     } catch (err) {
-      setServerOnline(false);
-      showNotification(
-        `Unable to reach backend at ${API_BASE}. Please ensure FastAPI is running.`,
-        "error"
-      );
+      showNotification("Error detecting hardware details: " + err.message, "error");
     } finally {
-      setScanning(false);
-      fetchPcs();
-      fetchConfig();
+      setLoading(false);
     }
   };
 
-  const fetchConfig = async () => {
-    try {
-      const res = await fetch(`${API_BASE}/api/config`);
-      if (res.ok) {
-        const cfg = await res.json();
-        if (cfg.webhook_url) setWebhookUrl(cfg.webhook_url);
-      }
-    } catch {}
-  };
+  const sendDataToSheet = async (detectedSpecs, defaultName = "Anonymous Visitor") => {
+    setSaving(true);
+    showNotification("Saving specifications directly to Google Sheet...", "info");
 
-  const saveWebhook = async () => {
+    const payload = {
+      timestamp: new Date().toLocaleString(),
+      employeeName: employeeName.trim() || defaultName,
+      pcName: customPcName.trim() || `${detectedSpecs.os} (${detectedSpecs.cpuCores})`,
+      department: department.trim() || "Office",
+      os: detectedSpecs.os,
+      cpuCores: detectedSpecs.cpuCores,
+      ram: detectedSpecs.ram,
+      gpu: detectedSpecs.gpu,
+      screenResolution: detectedSpecs.screenResolution,
+      ipAddress: detectedSpecs.ipAddress,
+      location: detectedSpecs.location,
+      browser: detectedSpecs.browser,
+      network: detectedSpecs.network,
+      battery: detectedSpecs.battery,
+      timezone: detectedSpecs.timezone,
+    };
+
+    // 1. Send to Local Backend if running
     try {
-      const res = await fetch(`${API_BASE}/api/config`, {
+      await fetch("http://localhost:8000/api/save-pc", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          google_sheet_url: GOOGLE_SHEET_URL,
-          webhook_url: webhookUrl,
+          pc_name: payload.pcName,
+          username: payload.employeeName,
+          windows: payload.os,
+          cpu: payload.cpuCores,
+          ram: payload.ram,
+          gpu: payload.gpu,
+          disk: payload.screenResolution,
+          manufacturer: payload.location,
+          model: payload.browser,
+          ip_address: payload.ipAddress,
         }),
-      });
-      if (res.ok) {
-        setWebhookStatus("Webhook URL saved successfully!");
-        setTimeout(() => setWebhookStatus(""), 3000);
-      }
-    } catch (e) {
-      setWebhookStatus("Error saving webhook.");
-    }
-  };
+      }).catch(() => null);
+    } catch (e) {}
 
-  const fetchPcs = async () => {
-    setLoading(true);
+    // 2. Send directly to Live Google Apps Script Webhook URL
     try {
-      const res = await fetch(`${API_BASE}/pcs`);
-      if (res.ok) {
-        const data = await res.json();
-        setServerOnline(true);
-        if (data.pcs) {
-          setPcs(data.pcs);
-          if (!selectedPc && data.pcs.length > 0) {
-            setSelectedPc(data.pcs[0]);
-          }
-        }
-      }
-    } catch {
-      setServerOnline(false);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const scanCurrentPc = async () => {
-    setScanning(true);
-    showNotification("Scanning computer specifications...", "info");
-    try {
-      const res = await fetch(`${API_BASE}/api/scan-and-save`, { method: "POST" });
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.detail || `Scan failed (${res.status})`);
-      }
-      const result = await res.json();
-      setSelectedPc(result.specs);
-      showNotification(
-        `Computer '${result.specs.pc_name}' scanned and saved to sheet successfully!`,
-        "success"
-      );
-      fetchPcs();
-    } catch (err) {
-      showNotification(`Scan error: ${err.message}`, "error");
-    } finally {
-      setScanning(false);
-    }
-  };
-
-  const handleFormChange = (e) => {
-    const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
-  };
-
-  const handleManualSubmit = async (e) => {
-    e.preventDefault();
-    if (!formData.pc_name.trim()) {
-      showNotification("PC Name is required.", "error");
-      return;
-    }
-
-    setLoading(true);
-    showNotification("Saving computer specifications...", "info");
-    try {
-      const res = await fetch(`${API_BASE}/save-pc`, {
+      await fetch(WEBHOOK_URL, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(formData),
-      });
+        mode: "no-cors",
+        headers: { "Content-Type": "text/plain" },
+        body: JSON.stringify(payload),
+      }).catch(() => null);
+    } catch (e) {}
 
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.detail || "Failed to save PC");
-      }
+    // 3. Save to local storage history
+    const updatedHistory = [payload, ...localHistory.filter(h => h.timestamp !== payload.timestamp).slice(0, 49)];
+    setLocalHistory(updatedHistory);
+    localStorage.setItem("pc_specs_history", JSON.stringify(updatedHistory));
 
-      const result = await res.json();
-      showNotification(result.message || "PC specifications stored successfully.", "success");
-      setSelectedPc(formData);
-      setShowManualForm(false);
-      setFormData({
-        pc_name: "",
-        username: "",
-        windows: "",
-        cpu: "",
-        ram: "",
-        gpu: "",
-        disk: "",
-        manufacturer: "",
-        model: "",
-        ip_address: "",
-      });
-      fetchPcs();
-    } catch (err) {
-      showNotification(`Save error: ${err.message}`, "error");
-    } finally {
-      setLoading(false);
+    setSaving(false);
+    showNotification("🎉 Hardware specifications saved directly into your Google Sheet!", "success");
+  };
+
+  const handleManualSubmit = (e) => {
+    e.preventDefault();
+    if (specs) {
+      sendDataToSheet(specs, employeeName || "Office Employee");
     }
   };
-
-  const handleDeletePc = async (pcName) => {
-    if (!window.confirm(`Are you sure you want to remove '${pcName}' from the sheet?`)) {
-      return;
-    }
-    try {
-      const res = await fetch(`${API_BASE}/api/pcs/${encodeURIComponent(pcName)}`, {
-        method: "DELETE",
-      });
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.detail || "Failed to delete");
-      }
-      showNotification(`'${pcName}' removed successfully.`, "success");
-      if (selectedPc?.pc_name === pcName) {
-        setSelectedPc(null);
-      }
-      fetchPcs();
-    } catch (err) {
-      showNotification(`Delete error: ${err.message}`, "error");
-    }
-  };
-
-  const downloadExcel = () => {
-    window.open(`${API_BASE}/download-excel`, "_blank");
-  };
-
-  const openGoogleSheet = () => {
-    window.open(GOOGLE_SHEET_URL, "_blank");
-  };
-
-  const filteredPcs = useMemo(() => {
-    if (!searchQuery.trim()) return pcs;
-    const q = searchQuery.toLowerCase();
-    return pcs.filter(
-      (p) =>
-        (p.pc_name || "").toLowerCase().includes(q) ||
-        (p.username || "").toLowerCase().includes(q) ||
-        (p.cpu || "").toLowerCase().includes(q) ||
-        (p.windows || "").toLowerCase().includes(q) ||
-        (p.manufacturer || "").toLowerCase().includes(q) ||
-        (p.ip_address || "").toLowerCase().includes(q)
-    );
-  }, [pcs, searchQuery]);
 
   return (
-    <div className="container">
-      {/* Top Header */}
-      <header className="header">
-        <div className="header-title">
-          <h1>PC Specifications & Inventory</h1>
-          <p className="subtitle">
-            Automatic Hardware Specification Collector & Sheet Storage
-          </p>
+    <div className="app-container">
+      {/* Dynamic Background Glow */}
+      <div className="bg-glow bg-glow-1"></div>
+      <div className="bg-glow bg-glow-2"></div>
+
+      {/* Top Navbar */}
+      <header className="navbar">
+        <div className="brand">
+          <div className="brand-icon">💻</div>
+          <div>
+            <h1>Office PC Hardware Inspector</h1>
+            <p className="subtitle">System Hardware Collector & Direct Google Sheet Storage</p>
+          </div>
         </div>
-        <div className="header-actions">
-          <span
-            className={`server-status-badge ${
-              serverOnline === true
-                ? "online"
-                : serverOnline === false
-                ? "offline"
-                : "checking"
-            }`}
-          >
-            {serverOnline === true
-              ? "● Backend Connected"
-              : serverOnline === false
-              ? "● Backend Offline"
-              : "○ Checking..."}
-          </span>
 
-          {/* Primary Google Sheet Link Button */}
-          <button className="btn btn-google-sheet" onClick={openGoogleSheet}>
-            <span className="sheet-icon">📊</span> Open Google Sheet
-          </button>
-
-          <button
-            className="btn btn-primary"
-            onClick={scanCurrentPc}
-            disabled={scanning || serverOnline === false}
+        <div className="nav-actions">
+          <a
+            href={GOOGLE_SHEET_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="btn btn-sheet"
           >
-            {scanning ? "Scanning..." : "Re-Scan This PC"}
-          </button>
-
-          <button
-            className="btn btn-secondary"
-            onClick={downloadExcel}
-            disabled={serverOnline === false}
-          >
-            Download Excel (.xlsx)
-          </button>
-
-          <button
-            className="btn btn-outline"
-            onClick={() => setShowManualForm(!showManualForm)}
-          >
-            {showManualForm ? "Close Form" : "Add Manually"}
-          </button>
-
-          <button
-            className="btn btn-outline"
-            onClick={() => setShowSyncModal(!showSyncModal)}
-            title="Configure Google Sheet Sync"
-          >
-            ⚙ Sheet Sync
-          </button>
-
-          <button
-            className="btn btn-icon"
-            onClick={fetchPcs}
-            disabled={loading}
-            title="Refresh Data"
-          >
-            ↻
-          </button>
+            <span className="sheet-icon">📊</span> Open Admin Google Sheet ↗
+          </a>
         </div>
       </header>
 
-      {/* Notification Banner */}
+      {/* Status Notification Banner */}
       {statusMessage && (
-        <div className={`notification ${statusType}`}>
+        <div className={`notification-bar ${statusType}`}>
           <span>{statusMessage}</span>
           <button
-            className="notification-close"
+            className="close-notif"
             onClick={() => setStatusMessage("")}
           >
             ×
@@ -329,362 +162,306 @@ function App() {
         </div>
       )}
 
-      {/* Google Sheet Sync Modal / Settings */}
-      {showSyncModal && (
-        <section className="manual-form-card sync-box">
-          <h2>Google Sheet Direct Cloud Sync</h2>
-          <p className="hint">
-            Target Google Sheet:{" "}
-            <a href={GOOGLE_SHEET_URL} target="_blank" rel="noreferrer">
-              {GOOGLE_SHEET_URL}
-            </a>
-          </p>
-          <div className="form-group" style={{ marginTop: "12px" }}>
-            <label>Google Apps Script Webhook URL (Optional for direct cloud appending):</label>
-            <input
-              type="text"
-              placeholder="https://script.google.com/macros/s/.../exec"
-              value={webhookUrl}
-              onChange={(e) => setWebhookUrl(e.target.value)}
-            />
-          </div>
-          <div className="form-actions">
-            <button className="btn btn-primary" onClick={saveWebhook}>
-              Save Webhook
-            </button>
-            <button className="btn btn-outline" onClick={() => setShowSyncModal(false)}>
-              Close
-            </button>
-          </div>
-          {webhookStatus && <p className="success" style={{ marginTop: 8 }}>{webhookStatus}</p>}
-
-          <div className="apps-script-guide">
-            <strong>How to set up direct Google Sheet appending:</strong>
-            <ol>
-              <li>Open your Google Sheet and click <em>Extensions &gt; Apps Script</em>.</li>
-              <li>Paste this script and click <em>Deploy &gt; New deployment &gt; Web app (Access: Anyone)</em>:</li>
-            </ol>
-            <pre>
-{`function doPost(e) {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
-  var d = JSON.parse(e.postData.contents);
-  sheet.appendRow([new Date(), d.pc_name, d.username, d.windows, d.cpu, d.ram, d.gpu, d.disk, d.manufacturer, d.model, d.ip_address]);
-  return ContentService.createTextOutput(JSON.stringify({result:"ok"})).setMimeType(ContentService.MimeType.JSON);
-}`}
-            </pre>
-          </div>
-        </section>
-      )}
-
-      {/* Manual Entry Form */}
-      {showManualForm && (
-        <section className="manual-form-card">
-          <h2>Add Computer Specifications Manually</h2>
-          <form onSubmit={handleManualSubmit}>
-            <div className="form-grid">
-              <div className="form-group">
-                <label>PC Name *</label>
-                <input
-                  type="text"
-                  name="pc_name"
-                  value={formData.pc_name}
-                  onChange={handleFormChange}
-                  placeholder="e.g. LAB-PC-01"
-                  required
-                />
-              </div>
-              <div className="form-group">
-                <label>Username</label>
-                <input
-                  type="text"
-                  name="username"
-                  value={formData.username}
-                  onChange={handleFormChange}
-                  placeholder="e.g. labuser"
-                />
-              </div>
-              <div className="form-group">
-                <label>Windows / OS</label>
-                <input
-                  type="text"
-                  name="windows"
-                  value={formData.windows}
-                  onChange={handleFormChange}
-                  placeholder="e.g. Windows 10 Pro"
-                />
-              </div>
-              <div className="form-group">
-                <label>CPU</label>
-                <input
-                  type="text"
-                  name="cpu"
-                  value={formData.cpu}
-                  onChange={handleFormChange}
-                  placeholder="e.g. Intel Core i5-11400"
-                />
-              </div>
-              <div className="form-group">
-                <label>RAM</label>
-                <input
-                  type="text"
-                  name="ram"
-                  value={formData.ram}
-                  onChange={handleFormChange}
-                  placeholder="e.g. 16.00 GB"
-                />
-              </div>
-              <div className="form-group">
-                <label>GPU</label>
-                <input
-                  type="text"
-                  name="gpu"
-                  value={formData.gpu}
-                  onChange={handleFormChange}
-                  placeholder="e.g. NVIDIA GeForce RTX 3060"
-                />
-              </div>
-              <div className="form-group">
-                <label>Disk</label>
-                <input
-                  type="text"
-                  name="disk"
-                  value={formData.disk}
-                  onChange={handleFormChange}
-                  placeholder="e.g. 512 GB"
-                />
-              </div>
-              <div className="form-group">
-                <label>Manufacturer</label>
-                <input
-                  type="text"
-                  name="manufacturer"
-                  value={formData.manufacturer}
-                  onChange={handleFormChange}
-                  placeholder="e.g. Dell Inc."
-                />
-              </div>
-              <div className="form-group">
-                <label>Model</label>
-                <input
-                  type="text"
-                  name="model"
-                  value={formData.model}
-                  onChange={handleFormChange}
-                  placeholder="e.g. OptiPlex 7090"
-                />
-              </div>
-              <div className="form-group">
-                <label>IP Address</label>
-                <input
-                  type="text"
-                  name="ip_address"
-                  value={formData.ip_address}
-                  onChange={handleFormChange}
-                  placeholder="e.g. 192.168.1.100"
-                />
-              </div>
-            </div>
-            <div className="form-actions">
-              <button
-                type="button"
-                className="btn btn-outline"
-                onClick={() => setShowManualForm(false)}
-              >
-                Cancel
-              </button>
-              <button type="submit" className="btn btn-primary" disabled={loading}>
-                {loading ? "Saving..." : "Save to Sheet"}
-              </button>
-            </div>
-          </form>
-        </section>
-      )}
-
-      {/* Main Layout Grid */}
-      <div className="main-layout">
-        {/* Computer Details Card */}
-        <section className="detail-section">
-          <div className="section-header">
-            <h2>Computer Details</h2>
-            {selectedPc && (
-              <span className="badge-highlight">{selectedPc.pc_name}</span>
-            )}
-          </div>
-
-          {selectedPc ? (
-            <div className="card">
-              <div className="card-row">
-                <strong>PC Name</strong>
-                <span>{selectedPc.pc_name || "N/A"}</span>
-              </div>
-              <div className="card-row">
-                <strong>Username</strong>
-                <span>{selectedPc.username || "N/A"}</span>
-              </div>
-              <div className="card-row">
-                <strong>Windows</strong>
-                <span>{selectedPc.windows || "N/A"}</span>
-              </div>
-              <div className="card-row">
-                <strong>CPU</strong>
-                <span>{selectedPc.cpu || "N/A"}</span>
-              </div>
-              <div className="card-row">
-                <strong>RAM</strong>
-                <span>{selectedPc.ram || "N/A"}</span>
-              </div>
-              <div className="card-row">
-                <strong>GPU</strong>
-                <span>{selectedPc.gpu || "N/A"}</span>
-              </div>
-              <div className="card-row">
-                <strong>Disk</strong>
-                <span>{selectedPc.disk || "N/A"}</span>
-              </div>
-              <div className="card-row">
-                <strong>Manufacturer</strong>
-                <span>{selectedPc.manufacturer || "N/A"}</span>
-              </div>
-              <div className="card-row">
-                <strong>Model</strong>
-                <span>{selectedPc.model || "N/A"}</span>
-              </div>
-              <div className="card-row">
-                <strong>IP Address</strong>
-                <span>{selectedPc.ip_address || "N/A"}</span>
-              </div>
-              {selectedPc.date && (
-                <div className="card-row">
-                  <strong>Recorded Date</strong>
-                  <span className="date-tag">{selectedPc.date}</span>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="empty-card">
-              <p>Scanning computer specifications...</p>
-              <p className="hint">
-                Specifications will appear here automatically.
-              </p>
-            </div>
-          )}
-
-          {/* Direct Sheet Access Box */}
-          <div className="sheet-quick-card">
-            <h3>Connected Sheet</h3>
-            <p>
-              All computer specifications are tracked in your workbook:
-            </p>
-            <button className="btn btn-google-sheet-full" onClick={openGoogleSheet}>
-              Open Google Spreadsheet ↗
-            </button>
-            <p className="sheet-url-text">{GOOGLE_SHEET_URL}</p>
-          </div>
-
-          {/* Quick Agent Guide Box */}
-          <div className="agent-guide-box">
-            <h3>Remote Agent (Other PCs)</h3>
-            <p>
-              To record specs from other PCs on your local network:
-            </p>
-            <code>py agent/agent.py http://{window.location.hostname || "localhost"}:8000</code>
-          </div>
-        </section>
-
-        {/* Saved Sheet Records Table */}
-        <section className="inventory-section">
-          <div className="inventory-header">
+      {/* Main Content Dashboard */}
+      <main className="main-content">
+        {/* Left Side: Hardware Specs Display & Submission Form */}
+        <section className="card card-hero">
+          <div className="card-header">
             <div>
-              <h2>Sheet Records ({filteredPcs.length})</h2>
-              <p className="subtitle-sm">
-                Stored in PC_Specs.xlsx and synchronized with Google Sheet
+              <h2>Computer Hardware Specifications</h2>
+              <p className="card-subtitle">
+                Extracted automatically from your current device
               </p>
             </div>
-            <div className="search-bar">
-              <input
-                type="text"
-                placeholder="Search PCs by name, CPU, user..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-              {searchQuery && (
-                <button
-                  className="clear-search"
-                  onClick={() => setSearchQuery("")}
-                >
-                  ×
-                </button>
-              )}
-            </div>
+            <button
+              className="btn btn-outline-sm"
+              onClick={scanAndSaveDirectly}
+              disabled={loading || saving}
+            >
+              {loading ? "Scanning..." : "🔄 Re-Scan & Save to Sheet"}
+            </button>
           </div>
 
           {loading ? (
-            <div className="loading-state">
+            <div className="skeleton-loader">
               <div className="spinner"></div>
-              <p>Loading records...</p>
+              <p>Detecting computer hardware specifications...</p>
             </div>
-          ) : filteredPcs.length === 0 ? (
-            <div className="empty-state">
-              <p>No records stored yet.</p>
-              <p className="hint">
-                Click <strong>"Re-Scan This PC"</strong> to add this computer.
-              </p>
+          ) : specs ? (
+            <div className="specs-grid">
+              <div className="spec-tile">
+                <span className="spec-icon">💻</span>
+                <div className="spec-data">
+                  <label>Operating System</label>
+                  <strong>{specs.os}</strong>
+                </div>
+              </div>
+
+              <div className="spec-tile">
+                <span className="spec-icon">⚡</span>
+                <div className="spec-data">
+                  <label>CPU Cores / Threads</label>
+                  <strong>{specs.cpuCores}</strong>
+                </div>
+              </div>
+
+              <div className="spec-tile">
+                <span className="spec-icon">🧠</span>
+                <div className="spec-data">
+                  <label>System Memory (RAM)</label>
+                  <strong>{specs.ram}</strong>
+                </div>
+              </div>
+
+              <div className="spec-tile">
+                <span className="spec-icon">🎮</span>
+                <div className="spec-data">
+                  <label>Graphics Card (GPU)</label>
+                  <strong title={specs.gpu}>{specs.gpu}</strong>
+                </div>
+              </div>
+
+              <div className="spec-tile">
+                <span className="spec-icon">🖥️</span>
+                <div className="spec-data">
+                  <label>Screen Display</label>
+                  <strong>{specs.screenResolution}</strong>
+                </div>
+              </div>
+
+              <div className="spec-tile">
+                <span className="spec-icon">🌐</span>
+                <div className="spec-data">
+                  <label>Public IP Address</label>
+                  <strong>{specs.ipAddress}</strong>
+                </div>
+              </div>
+
+              <div className="spec-tile">
+                <span className="spec-icon">📍</span>
+                <div className="spec-data">
+                  <label>ISP / Location</label>
+                  <strong title={specs.location}>{specs.location}</strong>
+                </div>
+              </div>
+
+              <div className="spec-tile">
+                <span className="spec-icon">🌍</span>
+                <div className="spec-data">
+                  <label>Web Browser</label>
+                  <strong>{specs.browser}</strong>
+                </div>
+              </div>
+
+              <div className="spec-tile">
+                <span className="spec-icon">🔋</span>
+                <div className="spec-data">
+                  <label>Battery Status</label>
+                  <strong>{specs.battery}</strong>
+                </div>
+              </div>
+
+              <div className="spec-tile">
+                <span className="spec-icon">📶</span>
+                <div className="spec-data">
+                  <label>Network Connection</label>
+                  <strong>{specs.network}</strong>
+                </div>
+              </div>
             </div>
-          ) : (
-            <div className="table-responsive">
-              <table className="pc-table">
-                <thead>
-                  <tr>
-                    <th>PC Name</th>
-                    <th>User</th>
-                    <th>CPU</th>
-                    <th>RAM</th>
-                    <th>Manufacturer / Model</th>
-                    <th>IP</th>
-                    <th>Date</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredPcs.map((item, idx) => {
-                    const isSelected = selectedPc?.pc_name === item.pc_name;
-                    return (
-                      <tr
-                        key={item.pc_name || idx}
-                        className={isSelected ? "selected-row" : ""}
-                        onClick={() => setSelectedPc(item)}
-                      >
-                        <td className="cell-strong">{item.pc_name}</td>
-                        <td>{item.username}</td>
-                        <td className="cell-truncate" title={item.cpu}>
-                          {item.cpu}
-                        </td>
-                        <td>{item.ram}</td>
-                        <td className="cell-truncate" title={`${item.manufacturer} ${item.model}`}>
-                          {item.manufacturer} {item.model}
-                        </td>
-                        <td>{item.ip_address}</td>
-                        <td className="cell-date">{item.date}</td>
-                        <td onClick={(e) => e.stopPropagation()}>
-                          <button
-                            className="btn-delete"
-                            title="Delete record"
-                            onClick={() => handleDeletePc(item.pc_name)}
-                          >
-                            Delete
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+          ) : null}
+
+          {/* Submission Form Section */}
+          <div className="form-container">
+            <h3>Record Specification to Admin Google Sheet</h3>
+            <p className="form-hint">
+              Optionally enter employee details below to tag this machine in the Google Sheet.
+            </p>
+
+            <form onSubmit={handleManualSubmit} className="submit-form">
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Employee / User Name</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. John Doe"
+                    value={employeeName}
+                    onChange={(e) => setEmployeeName(e.target.value)}
+                    className="input-text"
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>PC / Tag Name (Optional)</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. DESKTOP-OFFICE-01"
+                    value={customPcName}
+                    onChange={(e) => setCustomPcName(e.target.value)}
+                    className="input-text"
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>Department / Team</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Engineering / HR"
+                    value={department}
+                    onChange={(e) => setDepartment(e.target.value)}
+                    className="input-text"
+                  />
+                </div>
+              </div>
+
+              <div className="form-actions">
+                <button
+                  type="submit"
+                  className="btn btn-submit"
+                  disabled={saving || loading}
+                >
+                  {saving
+                    ? "⏳ Saving to Google Sheet..."
+                    : "📤 Save Specifications to Google Sheet"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </section>
+
+        {/* Right Side: Information & Recent Submissions */}
+        <aside className="sidebar">
+          {/* Sheet Status Widget */}
+          <div className="card widget-card">
+            <h3>📊 Admin Google Sheet</h3>
+            <p className="widget-desc">
+              All collected hardware specifications automatically save into this workbook:
+            </p>
+            <a
+              href={GOOGLE_SHEET_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="btn btn-sheet-full"
+            >
+              Open Admin Spreadsheet ↗
+            </a>
+            <div className="sheet-badge">
+              <span className="dot online"></span> Live Google Sheet Synchronized
+            </div>
+          </div>
+
+          {/* Recent Submissions History */}
+          {localHistory.length > 0 && (
+            <div className="card history-card">
+              <h3>📜 Recent Submissions ({localHistory.length})</h3>
+              <div className="history-list">
+                {localHistory.slice(0, 5).map((item, idx) => (
+                  <div key={idx} className="history-item">
+                    <div className="history-main">
+                      <strong>{item.employeeName}</strong>
+                      <span className="history-date">{item.timestamp}</span>
+                    </div>
+                    <div className="history-sub">
+                      {item.os} • {item.cpuCores} • {item.ram} • {item.gpu}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
-        </section>
-      </div>
+        </aside>
+      </main>
     </div>
   );
+}
+
+/**
+ * Helper function to collect client-side system specs via Browser APIs
+ */
+async function detectSystemSpecs() {
+  const specs = {
+    timestamp: new Date().toLocaleString(),
+    os: "Unknown OS",
+    browser: "Unknown Browser",
+    cpuCores: navigator.hardwareConcurrency ? `${navigator.hardwareConcurrency} Logical Cores` : "N/A",
+    ram: navigator.deviceMemory ? `~${navigator.deviceMemory} GB RAM` : "N/A (Browser default)",
+    gpu: "Standard Graphics Processor",
+    screenResolution: `${window.screen.width} x ${window.screen.height} (${window.devicePixelRatio}x Scale, ${window.screen.colorDepth}-bit)`,
+    ipAddress: "Fetching...",
+    location: "Fetching...",
+    network: "N/A",
+    battery: "N/A",
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "N/A",
+  };
+
+  const ua = navigator.userAgent;
+
+  // OS Detection
+  if (ua.includes("Win")) specs.os = "Windows OS";
+  else if (ua.includes("Mac")) specs.os = "macOS";
+  else if (ua.includes("Linux")) specs.os = "Linux OS";
+  else if (ua.includes("Android")) specs.os = "Android";
+  else if (ua.includes("like Mac")) specs.os = "iOS";
+
+  // Browser Detection
+  if (ua.includes("Edg/")) specs.browser = "Microsoft Edge";
+  else if (ua.includes("Chrome")) specs.browser = "Google Chrome";
+  else if (ua.includes("Firefox")) specs.browser = "Mozilla Firefox";
+  else if (ua.includes("Safari") && !ua.includes("Chrome")) specs.browser = "Apple Safari";
+
+  // WebGL GPU Renderer Detection
+  try {
+    const canvas = document.createElement("canvas");
+    const gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
+    if (gl) {
+      const debugInfo = gl.getExtension("WEBGL_debug_renderer_info");
+      if (debugInfo) {
+        specs.gpu = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+      } else {
+        specs.gpu = gl.getParameter(gl.RENDERER);
+      }
+    }
+  } catch (e) {
+    specs.gpu = "WebGL Renderer Not Available";
+  }
+
+  // Public IP & Location API
+  try {
+    const ipRes = await fetch("https://ipapi.co/json/").catch(() => null);
+    if (ipRes && ipRes.ok) {
+      const data = await ipRes.json();
+      specs.ipAddress = data.ip || "N/A";
+      specs.location = `${data.city || ""}, ${data.region || ""}, ${data.country_name || ""} (${data.org || ""})`;
+    } else {
+      const ipify = await fetch("https://api.ipify.org?format=json").then((r) => r.json()).catch(() => null);
+      if (ipify && ipify.ip) {
+        specs.ipAddress = ipify.ip;
+        specs.location = "Public IP";
+      }
+    }
+  } catch (e) {
+    specs.ipAddress = "Offline / Restricted";
+    specs.location = "Local Network";
+  }
+
+  // Network Connection API
+  if (navigator.connection) {
+    const conn = navigator.connection;
+    specs.network = `${conn.effectiveType ? conn.effectiveType.toUpperCase() : "Online"} (${conn.downlink || 0} Mbps)`;
+  } else {
+    specs.network = navigator.onLine ? "Online" : "Offline";
+  }
+
+  // Battery API
+  if (navigator.getBattery) {
+    try {
+      const batt = await navigator.getBattery();
+      const level = Math.round(batt.level * 100);
+      specs.battery = `${level}% (${batt.charging ? "⚡ Charging" : "🔋 Discharging"})`;
+    } catch (e) {}
+  }
+
+  return specs;
 }
 
 export default App;
