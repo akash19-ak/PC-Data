@@ -13,7 +13,7 @@ body {
 .container {
   max-width: 1380px;
   margin: 0 auto;
-  padding: 30px 24px;
+  padding: 24px;
 }
 
 /* Header */
@@ -23,23 +23,23 @@ body {
   align-items: center;
   flex-wrap: wrap;
   gap: 16px;
-  margin-bottom: 24px;
+  margin-bottom: 20px;
   background: #ffffff;
-  padding: 20px 28px;
+  padding: 18px 24px;
   border-radius: 12px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
 }
 
 .header-title h1 {
   margin: 0;
-  font-size: 1.65rem;
+  font-size: 1.55rem;
   font-weight: 700;
   color: #1a2a3a;
 }
 
 .subtitle {
   margin: 4px 0 0 0;
-  font-size: 0.9rem;
+  font-size: 0.88rem;
   color: #64748b;
 }
 
@@ -61,7 +61,7 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 9px 18px;
+  padding: 8px 16px;
   font-size: 0.88rem;
   font-weight: 600;
   border-radius: 6px;
@@ -83,6 +83,36 @@ body {
 
 .btn-primary:hover:not(:disabled) {
   background-color: #163857;
+}
+
+.btn-google-sheet {
+  background-color: #0f9d58;
+  color: #ffffff;
+  display: inline-flex;
+  gap: 6px;
+  box-shadow: 0 1px 3px rgba(15, 157, 88, 0.3);
+}
+
+.btn-google-sheet:hover:not(:disabled) {
+  background-color: #0b8043;
+}
+
+.btn-google-sheet-full {
+  width: 100%;
+  background-color: #0f9d58;
+  color: #ffffff;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+  margin-top: 8px;
+}
+
+.btn-google-sheet-full:hover {
+  background-color: #0b8043;
 }
 
 .btn-secondary {
@@ -110,7 +140,7 @@ body {
   border: 1px solid #cbd5e1;
   color: #1e293b;
   font-size: 1.1rem;
-  padding: 8px 14px;
+  padding: 7px 12px;
   border-radius: 6px;
   cursor: pointer;
 }
@@ -202,17 +232,17 @@ body {
 /* Manual Form Card */
 .manual-form-card {
   background: #ffffff;
-  padding: 24px 28px;
+  padding: 22px 26px;
   border-radius: 12px;
-  margin-bottom: 24px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+  margin-bottom: 20px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
   border: 1px solid #e2e8f0;
 }
 
 .manual-form-card h2 {
   margin-top: 0;
-  margin-bottom: 20px;
-  font-size: 1.25rem;
+  margin-bottom: 16px;
+  font-size: 1.2rem;
   color: #1e293b;
 }
 
@@ -251,7 +281,7 @@ body {
   display: flex;
   justify-content: flex-end;
   gap: 12px;
-  margin-top: 20px;
+  margin-top: 18px;
 }
 
 /* Main Layout Grid */
@@ -271,7 +301,7 @@ body {
 .detail-section {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 18px;
 }
 
 .section-header {
@@ -299,7 +329,7 @@ body {
   background: #ffffff;
   padding: 16px 20px;
   border-radius: 12px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
   border: 1px solid #e2e8f0;
 }
 
@@ -355,6 +385,34 @@ body {
   color: #94a3b8;
 }
 
+/* Quick Sheet Card */
+.sheet-quick-card {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 10px;
+  padding: 16px 18px;
+}
+
+.sheet-quick-card h3 {
+  margin: 0 0 6px 0;
+  font-size: 0.95rem;
+  color: #166534;
+}
+
+.sheet-quick-card p {
+  margin: 0 0 8px 0;
+  font-size: 0.82rem;
+  color: #4b5563;
+}
+
+.sheet-url-text {
+  font-size: 0.72rem;
+  color: #6b7280;
+  word-break: break-all;
+  margin-top: 8px;
+  font-family: monospace;
+}
+
 /* Agent Guide Box */
 .agent-guide-box {
   background: #f8fafc;
@@ -386,12 +444,42 @@ body {
   font-family: Consolas, monospace;
 }
 
+/* Sync Box */
+.sync-box .hint a {
+  color: #0f9d58;
+  word-break: break-all;
+}
+
+.apps-script-guide {
+  margin-top: 16px;
+  background: #f8fafc;
+  padding: 14px 16px;
+  border-radius: 8px;
+  font-size: 0.84rem;
+  color: #334155;
+}
+
+.apps-script-guide ol {
+  padding-left: 20px;
+  margin: 8px 0;
+}
+
+.apps-script-guide pre {
+  background: #1e293b;
+  color: #e2e8f0;
+  padding: 12px;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  overflow-x: auto;
+  font-family: Consolas, monospace;
+}
+
 /* Inventory Section */
 .inventory-section {
   background: #ffffff;
   padding: 20px 24px;
   border-radius: 12px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
   border: 1px solid #e2e8f0;
   display: flex;
   flex-direction: column;

@@ -2,6 +2,8 @@ import { useEffect, useState, useMemo } from "react";
 import "./App.css";
 
 const API_BASE = "http://localhost:8000";
+const GOOGLE_SHEET_URL =
+  "https://docs.google.com/spreadsheets/d/1n2Y-ODl1AhIs_dRAUfa-sWTrSJFKttzrQMZl0f6gD3Y/edit?gid=0#gid=0";
 
 function App() {
   const [pcs, setPcs] = useState([]);
@@ -9,12 +11,14 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [serverOnline, setServerOnline] = useState(null);
-  const [statusMessage, setStatusMessage] = useState("");
+  const [statusMessage, setStatusMessage] = useState("Connecting and scanning system specifications...");
   const [statusType, setStatusType] = useState("info"); // 'info' | 'success' | 'error'
   const [searchQuery, setSearchQuery] = useState("");
   const [showManualForm, setShowManualForm] = useState(false);
+  const [showSyncModal, setShowSyncModal] = useState(false);
+  const [webhookUrl, setWebhookUrl] = useState("");
+  const [webhookStatus, setWebhookStatus] = useState("");
 
-  // Manual entry form state
   const [formData, setFormData] = useState({
     pc_name: "",
     username: "",
@@ -28,9 +32,10 @@ function App() {
     ip_address: "",
   });
 
-  // Check server health & load initial list
+  // Requirement: "As we press link it should show computer details and store that in sheet"
+  // So automatically trigger scan and store on initial page load!
   useEffect(() => {
-    fetchPcs();
+    initApp();
   }, []);
 
   const showNotification = (msg, type = "info") => {
@@ -38,28 +43,83 @@ function App() {
     setStatusType(type);
   };
 
+  const initApp = async () => {
+    setScanning(true);
+    showNotification("Detecting computer hardware details & saving to sheet...", "info");
+    try {
+      // 1. Trigger scan and save
+      const scanRes = await fetch(`${API_BASE}/api/scan-and-save`, { method: "POST" });
+      if (scanRes.ok) {
+        const scanData = await scanRes.json();
+        setServerOnline(true);
+        if (scanData.specs) {
+          setSelectedPc(scanData.specs);
+          showNotification(
+            `Computer details for '${scanData.specs.pc_name}' loaded and saved to sheet successfully!`,
+            "success"
+          );
+        }
+      } else {
+        setServerOnline(true);
+      }
+    } catch (err) {
+      setServerOnline(false);
+      showNotification(
+        `Unable to reach backend at ${API_BASE}. Please ensure FastAPI is running.`,
+        "error"
+      );
+    } finally {
+      setScanning(false);
+      fetchPcs();
+      fetchConfig();
+    }
+  };
+
+  const fetchConfig = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/config`);
+      if (res.ok) {
+        const cfg = await res.json();
+        if (cfg.webhook_url) setWebhookUrl(cfg.webhook_url);
+      }
+    } catch {}
+  };
+
+  const saveWebhook = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/config`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          google_sheet_url: GOOGLE_SHEET_URL,
+          webhook_url: webhookUrl,
+        }),
+      });
+      if (res.ok) {
+        setWebhookStatus("Webhook URL saved successfully!");
+        setTimeout(() => setWebhookStatus(""), 3000);
+      }
+    } catch (e) {
+      setWebhookStatus("Error saving webhook.");
+    }
+  };
+
   const fetchPcs = async () => {
     setLoading(true);
     try {
       const res = await fetch(`${API_BASE}/pcs`);
-      if (!res.ok) {
-        throw new Error(`Server returned ${res.status}`);
-      }
-      const data = await res.json();
-      setServerOnline(true);
-      if (data.pcs) {
-        setPcs(data.pcs);
-        if (data.pcs.length > 0 && !selectedPc) {
-          setSelectedPc(data.pcs[0]);
+      if (res.ok) {
+        const data = await res.json();
+        setServerOnline(true);
+        if (data.pcs) {
+          setPcs(data.pcs);
+          if (!selectedPc && data.pcs.length > 0) {
+            setSelectedPc(data.pcs[0]);
+          }
         }
       }
-      showNotification("Data loaded successfully from Excel.", "success");
-    } catch (err) {
+    } catch {
       setServerOnline(false);
-      showNotification(
-        `Unable to connect to backend server at ${API_BASE}. Please ensure FastAPI is running.`,
-        "error"
-      );
     } finally {
       setLoading(false);
     }
@@ -67,22 +127,19 @@ function App() {
 
   const scanCurrentPc = async () => {
     setScanning(true);
-    showNotification("Collecting hardware and system specifications...", "info");
+    showNotification("Scanning computer specifications...", "info");
     try {
-      const res = await fetch(`${API_BASE}/api/scan-and-save`, {
-        method: "POST",
-      });
+      const res = await fetch(`${API_BASE}/api/scan-and-save`, { method: "POST" });
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.detail || `Scan failed (Status: ${res.status})`);
+        throw new Error(errData.detail || `Scan failed (${res.status})`);
       }
       const result = await res.json();
       setSelectedPc(result.specs);
       showNotification(
-        `PC '${result.specs.pc_name}' scanned and saved to Excel successfully.`,
+        `Computer '${result.specs.pc_name}' scanned and saved to sheet successfully!`,
         "success"
       );
-      // Reload inventory list
       fetchPcs();
     } catch (err) {
       showNotification(`Scan error: ${err.message}`, "error");
@@ -104,7 +161,7 @@ function App() {
     }
 
     setLoading(true);
-    showNotification("Saving PC specifications...", "info");
+    showNotification("Saving computer specifications...", "info");
     try {
       const res = await fetch(`${API_BASE}/save-pc`, {
         method: "POST",
@@ -118,7 +175,7 @@ function App() {
       }
 
       const result = await res.json();
-      showNotification(result.message || "PC information saved successfully.", "success");
+      showNotification(result.message || "PC specifications stored successfully.", "success");
       setSelectedPc(formData);
       setShowManualForm(false);
       setFormData({
@@ -142,7 +199,7 @@ function App() {
   };
 
   const handleDeletePc = async (pcName) => {
-    if (!window.confirm(`Are you sure you want to delete '${pcName}' from Excel?`)) {
+    if (!window.confirm(`Are you sure you want to remove '${pcName}' from the sheet?`)) {
       return;
     }
     try {
@@ -151,9 +208,9 @@ function App() {
       });
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.detail || "Failed to delete PC");
+        throw new Error(errData.detail || "Failed to delete");
       }
-      showNotification(`PC '${pcName}' removed successfully.`, "success");
+      showNotification(`'${pcName}' removed successfully.`, "success");
       if (selectedPc?.pc_name === pcName) {
         setSelectedPc(null);
       }
@@ -167,7 +224,10 @@ function App() {
     window.open(`${API_BASE}/download-excel`, "_blank");
   };
 
-  // Filtered PC list based on search
+  const openGoogleSheet = () => {
+    window.open(GOOGLE_SHEET_URL, "_blank");
+  };
+
   const filteredPcs = useMemo(() => {
     if (!searchQuery.trim()) return pcs;
     const q = searchQuery.toLowerCase();
@@ -184,11 +244,13 @@ function App() {
 
   return (
     <div className="container">
-      {/* Header bar */}
+      {/* Top Header */}
       <header className="header">
         <div className="header-title">
-          <h1>PC Specifications Manager</h1>
-          <p className="subtitle">Hardware & System Inventory Management</p>
+          <h1>PC Specifications & Inventory</h1>
+          <p className="subtitle">
+            Automatic Hardware Specification Collector & Sheet Storage
+          </p>
         </div>
         <div className="header-actions">
           <span
@@ -206,19 +268,20 @@ function App() {
               ? "● Backend Offline"
               : "○ Checking..."}
           </span>
+
+          {/* Primary Google Sheet Link Button */}
+          <button className="btn btn-google-sheet" onClick={openGoogleSheet}>
+            <span className="sheet-icon">📊</span> Open Google Sheet
+          </button>
+
           <button
             className="btn btn-primary"
             onClick={scanCurrentPc}
             disabled={scanning || serverOnline === false}
           >
-            {scanning ? "Scanning System..." : "Scan Current PC"}
+            {scanning ? "Scanning..." : "Re-Scan This PC"}
           </button>
-          <button
-            className="btn btn-outline"
-            onClick={() => setShowManualForm(!showManualForm)}
-          >
-            {showManualForm ? "Close Form" : "Add Manually"}
-          </button>
+
           <button
             className="btn btn-secondary"
             onClick={downloadExcel}
@@ -226,18 +289,34 @@ function App() {
           >
             Download Excel (.xlsx)
           </button>
+
+          <button
+            className="btn btn-outline"
+            onClick={() => setShowManualForm(!showManualForm)}
+          >
+            {showManualForm ? "Close Form" : "Add Manually"}
+          </button>
+
+          <button
+            className="btn btn-outline"
+            onClick={() => setShowSyncModal(!showSyncModal)}
+            title="Configure Google Sheet Sync"
+          >
+            ⚙ Sheet Sync
+          </button>
+
           <button
             className="btn btn-icon"
             onClick={fetchPcs}
             disabled={loading}
-            title="Refresh from Excel"
+            title="Refresh Data"
           >
             ↻
           </button>
         </div>
       </header>
 
-      {/* Notification / Status Message */}
+      {/* Notification Banner */}
       {statusMessage && (
         <div className={`notification ${statusType}`}>
           <span>{statusMessage}</span>
@@ -250,10 +329,57 @@ function App() {
         </div>
       )}
 
+      {/* Google Sheet Sync Modal / Settings */}
+      {showSyncModal && (
+        <section className="manual-form-card sync-box">
+          <h2>Google Sheet Direct Cloud Sync</h2>
+          <p className="hint">
+            Target Google Sheet:{" "}
+            <a href={GOOGLE_SHEET_URL} target="_blank" rel="noreferrer">
+              {GOOGLE_SHEET_URL}
+            </a>
+          </p>
+          <div className="form-group" style={{ marginTop: "12px" }}>
+            <label>Google Apps Script Webhook URL (Optional for direct cloud appending):</label>
+            <input
+              type="text"
+              placeholder="https://script.google.com/macros/s/.../exec"
+              value={webhookUrl}
+              onChange={(e) => setWebhookUrl(e.target.value)}
+            />
+          </div>
+          <div className="form-actions">
+            <button className="btn btn-primary" onClick={saveWebhook}>
+              Save Webhook
+            </button>
+            <button className="btn btn-outline" onClick={() => setShowSyncModal(false)}>
+              Close
+            </button>
+          </div>
+          {webhookStatus && <p className="success" style={{ marginTop: 8 }}>{webhookStatus}</p>}
+
+          <div className="apps-script-guide">
+            <strong>How to set up direct Google Sheet appending:</strong>
+            <ol>
+              <li>Open your Google Sheet and click <em>Extensions &gt; Apps Script</em>.</li>
+              <li>Paste this script and click <em>Deploy &gt; New deployment &gt; Web app (Access: Anyone)</em>:</li>
+            </ol>
+            <pre>
+{`function doPost(e) {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  var d = JSON.parse(e.postData.contents);
+  sheet.appendRow([new Date(), d.pc_name, d.username, d.windows, d.cpu, d.ram, d.gpu, d.disk, d.manufacturer, d.model, d.ip_address]);
+  return ContentService.createTextOutput(JSON.stringify({result:"ok"})).setMimeType(ContentService.MimeType.JSON);
+}`}
+            </pre>
+          </div>
+        </section>
+      )}
+
       {/* Manual Entry Form */}
       {showManualForm && (
         <section className="manual-form-card">
-          <h2>Add / Update PC Specification</h2>
+          <h2>Add Computer Specifications Manually</h2>
           <form onSubmit={handleManualSubmit}>
             <div className="form-grid">
               <div className="form-group">
@@ -274,7 +400,7 @@ function App() {
                   name="username"
                   value={formData.username}
                   onChange={handleFormChange}
-                  placeholder="e.g. labadmin"
+                  placeholder="e.g. labuser"
                 />
               </div>
               <div className="form-group">
@@ -367,19 +493,19 @@ function App() {
                 Cancel
               </button>
               <button type="submit" className="btn btn-primary" disabled={loading}>
-                {loading ? "Saving..." : "Save to Excel"}
+                {loading ? "Saving..." : "Save to Sheet"}
               </button>
             </div>
           </form>
         </section>
       )}
 
-      {/* Main Grid: Detail Card & Excel Table */}
+      {/* Main Layout Grid */}
       <div className="main-layout">
-        {/* Selected PC Specifications Card */}
+        {/* Computer Details Card */}
         <section className="detail-section">
           <div className="section-header">
-            <h2>Specification Details</h2>
+            <h2>Computer Details</h2>
             {selectedPc && (
               <span className="badge-highlight">{selectedPc.pc_name}</span>
             )}
@@ -436,31 +562,43 @@ function App() {
             </div>
           ) : (
             <div className="empty-card">
-              <p>No PC selected.</p>
+              <p>Scanning computer specifications...</p>
               <p className="hint">
-                Click <strong>"Scan Current PC"</strong> above or choose a row from
-                the inventory table.
+                Specifications will appear here automatically.
               </p>
             </div>
           )}
 
+          {/* Direct Sheet Access Box */}
+          <div className="sheet-quick-card">
+            <h3>Connected Sheet</h3>
+            <p>
+              All computer specifications are tracked in your workbook:
+            </p>
+            <button className="btn btn-google-sheet-full" onClick={openGoogleSheet}>
+              Open Google Spreadsheet ↗
+            </button>
+            <p className="sheet-url-text">{GOOGLE_SHEET_URL}</p>
+          </div>
+
           {/* Quick Agent Guide Box */}
           <div className="agent-guide-box">
-            <h3>Remote PC Inventory (Agent)</h3>
+            <h3>Remote Agent (Other PCs)</h3>
             <p>
-              To record specs from other computers in the network, run the agent
-              on those machines:
+              To record specs from other PCs on your local network:
             </p>
             <code>py agent/agent.py http://{window.location.hostname || "localhost"}:8000</code>
           </div>
         </section>
 
-        {/* Excel Inventory Table */}
+        {/* Saved Sheet Records Table */}
         <section className="inventory-section">
           <div className="inventory-header">
             <div>
-              <h2>Excel Inventory ({filteredPcs.length})</h2>
-              <p className="subtitle-sm">Records saved in PC_Specs.xlsx</p>
+              <h2>Sheet Records ({filteredPcs.length})</h2>
+              <p className="subtitle-sm">
+                Stored in PC_Specs.xlsx and synchronized with Google Sheet
+              </p>
             </div>
             <div className="search-bar">
               <input
@@ -483,13 +621,13 @@ function App() {
           {loading ? (
             <div className="loading-state">
               <div className="spinner"></div>
-              <p>Loading records from Excel...</p>
+              <p>Loading records...</p>
             </div>
           ) : filteredPcs.length === 0 ? (
             <div className="empty-state">
-              <p>No records found in Excel.</p>
+              <p>No records stored yet.</p>
               <p className="hint">
-                Use <strong>"Scan Current PC"</strong> or <strong>"Add Manually"</strong> to add your first record.
+                Click <strong>"Re-Scan This PC"</strong> to add this computer.
               </p>
             </div>
           ) : (
@@ -530,7 +668,7 @@ function App() {
                         <td onClick={(e) => e.stopPropagation()}>
                           <button
                             className="btn-delete"
-                            title="Delete record from Excel"
+                            title="Delete record"
                             onClick={() => handleDeletePc(item.pc_name)}
                           >
                             Delete
