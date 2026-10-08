@@ -1,24 +1,16 @@
-from fastapi import FastAPI, HTTPException, Request, status
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
-from openpyxl import Workbook, load_workbook
-from openpyxl.styles import Font, PatternFill, Alignment
-from datetime import datetime
+from pydantic import BaseModel, Field
 from pathlib import Path
-import threading
-import socket
-import getpass
-import platform
-import subprocess
-import requests
+from datetime import datetime
 import json
 import os
+import requests
 
-app = FastAPI(title="PC Specifications API", version="1.0.0")
+app = FastAPI(title="PC Specifications API", version="2.0.0")
 
-# React frontend CORS access
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -28,45 +20,62 @@ app.add_middleware(
 )
 
 BASE_DIR = Path(__file__).resolve().parent
-EXCEL_FILE = BASE_DIR / "PC_Specs.xlsx"
+DATA_DIR = BASE_DIR / "data"
+DATA_FILE = DATA_DIR / "pcs.json"
 DIST_DIR = BASE_DIR.parent / "frontend" / "dist"
 CONFIG_FILE = BASE_DIR / "config.json"
 
 if (DIST_DIR / "assets").exists():
     app.mount("/assets", StaticFiles(directory=str(DIST_DIR / "assets")), name="assets")
 
-excel_lock = threading.Lock()
-
-HEADERS = [
-    "Date",
-    "PC Name",
-    "Username",
-    "Windows",
-    "CPU",
-    "RAM",
-    "GPU",
-    "Disk",
-    "Manufacturer",
-    "Model",
-    "IP Address",
-]
-
 
 class PCSpecs(BaseModel):
-    pc_name: str
-    username: str
-    windows: str
-    cpu: str
-    ram: str
-    gpu: str
-    disk: str
-    manufacturer: str
-    model: str
-    ip_address: str
+    pc_name: str = Field(default="")
+    username: str = Field(default="")
+    windows: str = Field(default="")
+    cpu: str = Field(default="")
+    ram: str = Field(default="")
+    gpu: str = Field(default="")
+    disk: str = Field(default="")
+    manufacturer: str = Field(default="")
+    model: str = Field(default="")
+    ip_address: str = Field(default="")
+    employee_name: str = Field(default="")
+    department: str = Field(default="")
+    browser: str = Field(default="")
+    location: str = Field(default="")
+    network: str = Field(default="")
+    battery: str = Field(default="")
+    timezone: str = Field(default="")
+    timestamp: str = Field(default_factory=lambda: datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"))
 
 
 class ConfigModel(BaseModel):
     webhook_url: str = ""
+
+
+def ensure_data_file():
+    DATA_DIR.mkdir(exist_ok=True)
+    if not DATA_FILE.exists():
+        DATA_FILE.write_text("[]", encoding="utf-8")
+
+
+def load_records() -> list:
+    ensure_data_file()
+    try:
+        with DATA_FILE.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        if isinstance(data, list):
+            return data
+    except Exception:
+        pass
+    return []
+
+
+def save_records(records: list):
+    ensure_data_file()
+    with DATA_FILE.open("w", encoding="utf-8") as handle:
+        json.dump(records, handle, indent=2)
 
 
 def get_config() -> dict:
@@ -75,8 +84,8 @@ def get_config() -> dict:
     }
     if CONFIG_FILE.exists():
         try:
-            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
+            with open(CONFIG_FILE, "r", encoding="utf-8") as file:
+                data = json.load(file)
                 config.update(data)
         except Exception:
             pass
@@ -85,214 +94,51 @@ def get_config() -> dict:
 
 def save_config(cfg: dict):
     try:
-        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, indent=2)
+        with open(CONFIG_FILE, "w", encoding="utf-8") as file:
+            json.dump(cfg, file, indent=2)
     except Exception:
         pass
 
 
 def sync_to_google_sheet(data: dict):
-    """Legacy no-op kept for compatibility. Google Sheets sync is intentionally disabled."""
-    return {"status": "disabled", "message": "Google Sheets sync is disabled."}
+    webhook_url = os.environ.get("GOOGLE_SHEET_WEBHOOK") or get_config().get("webhook_url")
+    if not webhook_url:
+        return {"status": "disabled", "message": "Google Sheets sync is not configured."}
 
-
-def create_excel():
-    """Ensure the Excel workbook exists and has the correct sheet and styled headers."""
-    needs_init = False
-    if not EXCEL_FILE.exists() or EXCEL_FILE.stat().st_size == 0:
-        needs_init = True
-    else:
-        try:
-            wb = load_workbook(EXCEL_FILE, read_only=True)
-            if "PC Specifications" not in wb.sheetnames and len(wb.sheetnames) == 0:
-                needs_init = True
-            wb.close()
-        except Exception:
-            needs_init = True
-
-    if needs_init:
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "PC Specifications"
-        ws.append(HEADERS)
-
-        header_font = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
-        header_fill = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")
-
-        for col_num, header in enumerate(HEADERS, 1):
-            cell = ws.cell(row=1, column=col_num)
-            cell.font = header_font
-            cell.fill = header_fill
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-            ws.column_dimensions[cell.column_letter].width = max(len(header) + 6, 16)
-
-        try:
-            wb.save(EXCEL_FILE)
-            wb.close()
-        except PermissionError:
-            raise HTTPException(
-                status_code=status.HTTP_423_LOCKED,
-                detail="PC_Specs.xlsx is open in another program (like Microsoft Excel). Please close it and retry.",
-            )
-
-
-def get_workbook_sheet():
-    create_excel()
-    wb = load_workbook(EXCEL_FILE)
-    if "PC Specifications" in wb.sheetnames:
-        ws = wb["PC Specifications"]
-    else:
-        ws = wb.active
-        ws.title = "PC Specifications"
-        if ws.max_row == 0 or ws.cell(row=1, column=1).value is None:
-            ws.append(HEADERS)
-    return wb, ws
-
-
-def run_command(command: str) -> str:
     try:
-        result = subprocess.check_output(
-            command,
-            shell=True,
-            text=True,
-            stderr=subprocess.DEVNULL,
-            timeout=8,
-        )
-        return result.strip()
-    except Exception:
-        return ""
-
-
-def collect_local_system_specs() -> PCSpecs:
-    """Collect hardware and OS specifications for the current machine."""
-    hostname = socket.gethostname()
-    username = getpass.getuser()
-    win_version = platform.platform()
-
-    # CPU
-    cpu = run_command("wmic cpu get name")
-    if cpu:
-        cpu = cpu.replace("Name", "").strip()
-    if not cpu:
-        cpu = run_command('powershell -NoProfile -Command "(Get-CimInstance Win32_Processor).Name"')
-    if not cpu:
-        cpu = platform.processor() or "Unknown CPU"
-
-    # RAM
-    ram = "Unknown"
-    ram_raw = run_command("wmic computersystem get TotalPhysicalMemory")
-    if not ram_raw:
-        ram_raw = run_command('powershell -NoProfile -Command "(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory"')
-    if ram_raw:
-        try:
-            digits = [s for s in ram_raw.splitlines() if s.strip().isdigit()]
-            if digits:
-                gb = int(digits[-1].strip()) / (1024 ** 3)
-                ram = f"{gb:.2f} GB"
-        except Exception:
-            ram = "Unknown"
-
-    # GPU
-    gpu = run_command("wmic path win32_videocontroller get name")
-    if gpu:
-        lines = [line.strip() for line in gpu.splitlines() if line.strip() and line.strip() != "Name"]
-        gpu = ", ".join(lines) if lines else "Unknown GPU"
-    if not gpu or gpu == "Unknown GPU":
-        gpu_ps = run_command('powershell -NoProfile -Command "(Get-CimInstance Win32_VideoController).Name"')
-        if gpu_ps:
-            gpu = ", ".join([line.strip() for line in gpu_ps.splitlines() if line.strip()])
-    if not gpu:
-        gpu = "Unknown GPU"
-
-    # Manufacturer & Model
-    manufacturer = run_command("wmic computersystem get manufacturer").replace("Manufacturer", "").strip()
-    if not manufacturer:
-        manufacturer = run_command('powershell -NoProfile -Command "(Get-CimInstance Win32_ComputerSystem).Manufacturer"')
-    if not manufacturer:
-        manufacturer = "Unknown"
-
-    model = run_command("wmic computersystem get model").replace("Model", "").strip()
-    if not model:
-        model = run_command('powershell -NoProfile -Command "(Get-CimInstance Win32_ComputerSystem).Model"')
-    if not model:
-        model = "Unknown"
-
-    # Disk
-    disk = "Unknown"
-    disk_raw = run_command("wmic diskdrive get size")
-    if not disk_raw:
-        disk_raw = run_command('powershell -NoProfile -Command "(Get-CimInstance Win32_DiskDrive).Size"')
-    if disk_raw:
-        sizes = []
-        for line in disk_raw.splitlines():
-            line = line.strip()
-            if line.isdigit():
-                try:
-                    gb = int(line) / (1024 ** 3)
-                    sizes.append(f"{gb:.0f} GB")
-                except Exception:
-                    pass
-        if sizes:
-            disk = ", ".join(sizes)
-
-    # IP Address
-    ip_address = "Unknown"
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.settimeout(0.5)
-        s.connect(("8.8.8.8", 80))
-        ip_address = s.getsockname()[0]
-        s.close()
-    except Exception:
-        try:
-            ip_address = socket.gethostbyname(hostname)
-        except Exception:
-            ip_address = "127.0.0.1"
-
-    return PCSpecs(
-        pc_name=hostname,
-        username=username,
-        windows=win_version,
-        cpu=cpu,
-        ram=ram,
-        gpu=gpu,
-        disk=disk,
-        manufacturer=manufacturer,
-        model=model,
-        ip_address=ip_address,
-    )
-
-
-@app.on_event("startup")
-def on_startup():
-    with excel_lock:
-        create_excel()
+        response = requests.post(webhook_url, json=data, timeout=20)
+        return {
+            "status": "sent",
+            "http_status": response.status_code,
+            "response_text": response.text[:500],
+        }
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
 
 
 @app.get("/")
 def home(request: Request):
-    """
-    Serves the built Web UI if HTML is requested and frontend build exists,
-    otherwise returns the API health JSON.
-    """
     accept = request.headers.get("accept", "")
     index_file = DIST_DIR / "index.html"
     if "text/html" in accept and index_file.exists():
         return FileResponse(str(index_file))
-
-    # Also return JSON for non-browser / API checks
     return {
         "message": "PC Specification Server Running",
-        "excel_path": str(EXCEL_FILE),
         "status": "healthy",
         "ui_url": "/app",
+        "storage": str(DATA_FILE),
     }
+
+
+@app.get("/health")
+@app.get("/api/health")
+def health():
+    return {"status": "healthy", "records": len(load_records())}
 
 
 @app.get("/app")
 @app.get("/ui")
 def serve_ui():
-    """Serves the Single Page Application UI."""
     index_file = DIST_DIR / "index.html"
     if index_file.exists():
         return FileResponse(str(index_file))
@@ -313,190 +159,71 @@ def update_configuration(cfg: ConfigModel):
     return {"success": True, "config": data}
 
 
-@app.get("/specs")
-@app.get("/api/current-pc")
-def get_current_specs():
-    """Returns specifications for the machine hosting the backend."""
-    try:
-        specs = collect_local_system_specs()
-        return specs.model_dump() if hasattr(specs, "model_dump") else specs.dict()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to collect system specs: {str(e)}")
-
-
-@app.get("/pcs")
 @app.get("/api/pcs")
 def get_all_pcs():
-    """Reads all recorded PC specifications from the Excel file."""
-    with excel_lock:
-        try:
-            wb, ws = get_workbook_sheet()
-            rows = list(ws.iter_rows(values_only=True))
-            wb.close()
-        except PermissionError:
-            raise HTTPException(
-                status_code=status.HTTP_423_LOCKED,
-                detail="PC_Specs.xlsx is open in another program. Please close it to read data.",
-            )
-        except Exception as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error reading Excel file: {str(e)}",
-            )
+    pcs = load_records()
+    return {"success": True, "count": len(pcs), "pcs": pcs}
 
-    if not rows or len(rows) <= 1:
-        return {"success": True, "count": 0, "pcs": []}
 
-    pcs = []
-    for row_idx, row in enumerate(rows[1:], start=2):
-        if not any(row):
-            continue
-        pc_dict = {
-            "row_id": row_idx,
-            "date": str(row[0] or "").strip(),
-            "pc_name": str(row[1] or "").strip(),
-            "username": str(row[2] or "").strip(),
-            "windows": str(row[3] or "").strip(),
-            "cpu": str(row[4] or "").strip(),
-            "ram": str(row[5] or "").strip(),
-            "gpu": str(row[6] or "").strip(),
-            "disk": str(row[7] or "").strip(),
-            "manufacturer": str(row[8] or "").strip(),
-            "model": str(row[9] or "").strip(),
-            "ip_address": str(row[10] if len(row) > 10 and row[10] is not None else "").strip(),
-        }
-        pcs.append(pc_dict)
+@app.post("/api/save-pc")
+def save_pc(payload: dict):
+    if not payload:
+        raise HTTPException(status_code=400, detail="No data provided.")
+
+    record = dict(payload)
+    record.setdefault("timestamp", datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"))
+    record.setdefault("date", record["timestamp"])
+    record.setdefault("pc_name", record.get("pcName") or record.get("pc_name") or "Unknown PC")
+    record.setdefault("username", record.get("employee_name") or record.get("username") or "Unknown User")
+    record.setdefault("windows", record.get("windows") or record.get("os") or "Unknown OS")
+    record.setdefault("cpu", record.get("cpu") or record.get("cpuCores") or "Unknown CPU")
+    record.setdefault("ram", record.get("ram") or "Unknown RAM")
+    record.setdefault("gpu", record.get("gpu") or "Unknown GPU")
+    record.setdefault("disk", record.get("disk") or "Unknown Disk")
+    record.setdefault("manufacturer", record.get("manufacturer") or "Unknown Manufacturer")
+    record.setdefault("model", record.get("model") or "Unknown Model")
+    record.setdefault("ip_address", record.get("ip_address") or record.get("ipAddress") or "Unknown IP")
+
+    records = load_records()
+    existing_index = next(
+        (index for index, item in enumerate(records) if str(item.get("pc_name", "")).strip().lower() == str(record["pc_name"]).strip().lower()),
+        None,
+    )
+
+    if existing_index is not None:
+        records[existing_index] = record
+        action = "updated"
+    else:
+        records.append(record)
+        action = "created"
+
+    save_records(records)
+    sync_result = sync_to_google_sheet(record)
 
     return {
         "success": True,
-        "count": len(pcs),
-        "pcs": pcs,
+        "action": action,
+        "message": f"PC '{record['pc_name']}' information {action} successfully.",
+        "data": record,
+        "google_sheet": sync_result,
     }
-
-
-@app.post("/save-pc")
-@app.post("/api/save-pc")
-def save_pc(data: PCSpecs):
-    """Saves or updates PC specifications in the Excel file without unnecessary duplicate rows."""
-    with excel_lock:
-        try:
-            wb, ws = get_workbook_sheet()
-            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-            row_to_update = None
-            target_name = (data.pc_name or "").strip().lower()
-
-            for r in range(2, ws.max_row + 1):
-                existing_name = ws.cell(row=r, column=2).value
-                if existing_name and str(existing_name).strip().lower() == target_name:
-                    row_to_update = r
-                    break
-
-            new_values = [
-                now_str,
-                data.pc_name.strip(),
-                data.username.strip(),
-                data.windows.strip(),
-                data.cpu.strip(),
-                data.ram.strip(),
-                data.gpu.strip(),
-                data.disk.strip(),
-                data.manufacturer.strip(),
-                data.model.strip(),
-                data.ip_address.strip(),
-            ]
-
-            if row_to_update:
-                for c_idx, val in enumerate(new_values, start=1):
-                    ws.cell(row=row_to_update, column=c_idx, value=val)
-                action = "updated"
-            else:
-                ws.append(new_values)
-                action = "created"
-
-            wb.save(EXCEL_FILE)
-            wb.close()
-
-            payload = data.model_dump() if hasattr(data, "model_dump") else data.dict()
-            payload["date"] = now_str
-
-            return {
-                "success": True,
-                "action": action,
-                "message": f"PC '{data.pc_name}' information {action} successfully.",
-                "data": payload,
-            }
-
-        except PermissionError:
-            raise HTTPException(
-                status_code=status.HTTP_423_LOCKED,
-                detail="PC_Specs.xlsx is currently open in another program (e.g. Microsoft Excel). Please close it to save changes.",
-            )
-        except Exception as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to write to Excel: {str(e)}",
-            )
 
 
 @app.get("/api/scan-and-save")
 @app.post("/api/scan-and-save")
 def scan_and_save():
-    """Scans the current host PC hardware specs and automatically saves/updates in Excel & Sheet."""
-    specs = collect_local_system_specs()
-    result = save_pc(specs)
     return {
         "success": True,
-        "message": f"Local PC '{specs.pc_name}' scanned and saved successfully.",
-        "specs": specs.model_dump() if hasattr(specs, "model_dump") else specs.dict(),
-        "save_result": result,
+        "message": "This frontend version collects specs in the browser and sends them to the API.",
+        "note": "No Windows-only system commands are used in this cloud-friendly build.",
     }
-
-
-@app.get("/download-excel")
-@app.get("/api/download-excel")
-def download_excel():
-    """Allows downloading the PC_Specs.xlsx file directly from the browser."""
-    with excel_lock:
-        create_excel()
-        if not EXCEL_FILE.exists():
-            raise HTTPException(status_code=404, detail="Excel file does not exist.")
-
-        return FileResponse(
-            path=str(EXCEL_FILE),
-            filename="PC_Specs.xlsx",
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
 
 
 @app.delete("/api/pcs/{pc_name}")
 def delete_pc(pc_name: str):
-    """Deletes a PC entry from Excel by PC name."""
-    with excel_lock:
-        try:
-            wb, ws = get_workbook_sheet()
-            target = pc_name.strip().lower()
-            found_row = None
-
-            for r in range(2, ws.max_row + 1):
-                cell_val = ws.cell(row=r, column=2).value
-                if cell_val and str(cell_val).strip().lower() == target:
-                    found_row = r
-                    break
-
-            if not found_row:
-                raise HTTPException(status_code=404, detail=f"PC '{pc_name}' not found.")
-
-            ws.delete_rows(found_row, 1)
-            wb.save(EXCEL_FILE)
-            wb.close()
-
-            return {
-                "success": True,
-                "message": f"PC '{pc_name}' deleted successfully.",
-            }
-        except PermissionError:
-            raise HTTPException(
-                status_code=status.HTTP_423_LOCKED,
-                detail="PC_Specs.xlsx is locked. Please close Excel and try again.",
-            )
+    records = load_records()
+    filtered = [item for item in records if str(item.get("pc_name", "")).strip().lower() != pc_name.strip().lower()]
+    if len(filtered) == len(records):
+        raise HTTPException(status_code=404, detail=f"PC '{pc_name}' not found.")
+    save_records(filtered)
+    return {"success": True, "message": f"PC '{pc_name}' deleted successfully."}
